@@ -34,14 +34,8 @@ void backupCursorForIdentifier(NSString *ident) {
 }
 
 void backupAllCursors() {
-    bool arrowRegistered = false;
-    MCIsCursorRegistered(CGSMainConnectionID(), (char *)backupStringForIdentifier(@"com.apple.coregraphics.Arrow").UTF8String, &arrowRegistered);
-    
-    if (arrowRegistered) {
-        MMLog("Skipping backup, backup already exists");
-//         we are already backed up
-        return;
-    }
+    // Check each name separately so newly supported aliases also get backed up
+    // when a previous Mousecape build already backed up the legacy arrow.
     // Backup main cursors first
     NSUInteger i = 0;
     NSString *key = nil;

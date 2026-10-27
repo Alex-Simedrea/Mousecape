@@ -13,9 +13,55 @@
 #import "NSBitmapImageRep+ColorSpace.h"
 
 BOOL applyCursorForIdentifier(NSUInteger frameCount, CGFloat frameDuration, CGPoint hotSpot, CGSize size, NSArray *images, NSString *ident, NSUInteger repeatCount) {
-    if (frameCount > 24 || frameCount < 1) {
-        MMLog(BOLD RED "Frame count of %s out of range [1...24]", ident.UTF8String);
+    if (frameCount < 1) {
+        MMLog(BOLD RED "Frame count of %s must be at least 1" RESET, ident.UTF8String);
         return NO;
+    }
+
+    // WindowServer exports 30-frame system cursors but still rejects registering
+    // more than 24 frames. Sample the whole animation, preserving its duration
+    // and every image scale, rather than aborting the rest of the cape.
+    const NSUInteger maxFrames = 24;
+    if (frameCount > maxFrames) {
+        NSMutableArray *sampledImages = [NSMutableArray arrayWithCapacity:images.count];
+        for (id object in images) {
+            CGImageRef image = (__bridge CGImageRef)object;
+            size_t width = CGImageGetWidth(image);
+            size_t height = CGImageGetHeight(image);
+            if (height < frameCount || height % frameCount != 0) {
+                MMLog(BOLD RED "Invalid animation image for %s" RESET, ident.UTF8String);
+                return NO;
+            }
+            size_t frameHeight = height / frameCount;
+            CGColorSpaceRef colorSpace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+            CGContextRef context = CGBitmapContextCreate(NULL, width, frameHeight * maxFrames,
+                8, 0, colorSpace, kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+            CGColorSpaceRelease(colorSpace);
+            if (!context) return NO;
+            CGContextSetBlendMode(context, kCGBlendModeCopy);
+            for (NSUInteger frame = 0; frame < maxFrames; frame++) {
+                NSUInteger sourceFrame = frame * frameCount / maxFrames;
+                CGImageRef slice = CGImageCreateWithImageInRect(image,
+                    CGRectMake(0, sourceFrame * frameHeight, width, frameHeight));
+                if (!slice) {
+                    CGContextRelease(context);
+                    return NO;
+                }
+                CGContextDrawImage(context,
+                    CGRectMake(0, (maxFrames - frame - 1) * frameHeight, width, frameHeight), slice);
+                CGImageRelease(slice);
+            }
+            CGImageRef sampled = CGBitmapContextCreateImage(context);
+            CGContextRelease(context);
+            if (!sampled) return NO;
+            [sampledImages addObject:(__bridge id)sampled];
+            CGImageRelease(sampled);
+        }
+        MMLog("Sampling %s from %lu to %lu frames", ident.UTF8String,
+            (unsigned long)frameCount, (unsigned long)maxFrames);
+        images = sampledImages;
+        frameDuration *= (CGFloat)frameCount / maxFrames;
+        frameCount = maxFrames;
     }
 
     char *idenfifier = (char *)ident.UTF8String;
@@ -31,6 +77,9 @@ BOOL applyCursorForIdentifier(NSUInteger frameCount, CGFloat frameDuration, CGPo
                                               (__bridge CFArrayRef)images,
                                               &seed);
     
+    if (err != kCGErrorSuccess) {
+        MMLog(BOLD RED "Could not register %s: CGError %d" RESET, ident.UTF8String, err);
+    }
     return (err == kCGErrorSuccess);
 }
 
@@ -112,7 +161,20 @@ BOOL applyCapeForIdentifier(NSDictionary *cursor, NSString *identifier, BOOL res
 
 BOOL applyCape(NSDictionary *dictionary) {
     @autoreleasepool {
-        NSDictionary *cursors = dictionary[MCCursorDictionaryCursorsKey];
+        NSMutableDictionary *cursors = [[dictionary[MCCursorDictionaryCursorsKey] mutableCopy] autorelease];
+        // Newer macOS versions also use these names for the primary arrow and
+        // text cursor. Fill missing aliases without changing the cape on disk
+        // or overriding an explicitly supplied alias. Do not alias ArrowCtx or
+        // IBeamXOR: those can contain different artwork, including empty images.
+        NSDictionary *aliases = @{
+            @"com.apple.coregraphics.ArrowS": @"com.apple.coregraphics.Arrow",
+            @"com.apple.coregraphics.IBeamS": @"com.apple.coregraphics.IBeam"
+        };
+        for (NSString *alias in aliases) {
+            if (!cursors[alias] && cursors[aliases[alias]]) {
+                cursors[alias] = cursors[aliases[alias]];
+            }
+        }
         NSString *name = dictionary[MCCursorDictionaryCapeNameKey];
         NSNumber *version = dictionary[MCCursorDictionaryCapeVersionKey];
         

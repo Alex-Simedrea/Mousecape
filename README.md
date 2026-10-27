@@ -3,6 +3,33 @@ Mousecape
 
 A free cursor manager for Mac OS 10.8+ built using private, nonintrusive CoreGraphics APIs.
 
+## Local Apple Silicon build
+
+With Xcode selected, run from the repository root:
+
+```sh
+git submodule update --init --recursive
+xcodebuild -project Mousecape/Mousecape.xcodeproj \
+  -scheme Mousecape -configuration Release \
+  -derivedDataPath build/DerivedData \
+  -destination 'platform=macOS,arch=arm64' \
+  ARCHS=arm64 ONLY_ACTIVE_ARCH=YES MACOSX_DEPLOYMENT_TARGET=12.0 \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= \
+  ENABLE_HARDENED_RUNTIME=NO build
+```
+
+The locally signed app is in `build/DerivedData/Build/Products/Release/Mousecape.app`.
+This configuration was built and launch-tested with Xcode 27.0 on macOS 27.2.
+
+Older capes automatically supply missing `ArrowS` and `IBeamS` entries from
+their legacy arrow and I-beam definitions. Explicit aliases take precedence,
+and the cape file is unchanged. Both names participate in backup, reset, and
+cursor dumps. Animations longer than the registration API's 24-frame limit
+are sampled to 24 frames while preserving their total duration and image scales.
+
+Run the cursor compatibility tests with `sh tests/run-cursor-compatibility.sh`.
+These tests stub cursor registration and do not change system cursors.
+
 ![](https://github.com/alexzielenski/Mousecape/raw/master/screenshot.png)
 
 ## How it works
